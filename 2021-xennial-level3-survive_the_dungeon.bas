@@ -65,12 +65,12 @@
 3780 RETURN
 
 3800 REM {{CHECKMAZE}} check maze for positions to add to queue
-3810 LET pos = maze(row,col)
-3820 IF pos = 1 OR (pos = 3 AND treasureLeft > 0) THEN RETURN : REM wall or goal before all treasure found
-3830 IF pos >= 20 THEN
-3840     IF keys(pos-20) = 0 THEN RETURN : REM locked door
-3850 END IF
-3860 IF temp(row,col) <= dist THEN RETURN : REM already checked
+3810 IF temp(row,col) <= dist THEN RETURN : REM already checked
+3820 LET pos = maze(row,col)
+3830 IF pos = 1 OR (pos = 3 AND treasureLeft > 0) THEN RETURN : REM wall or goal before all treasure found
+3840 IF pos >= 20 THEN
+3850     IF keys(pos-20) = 0 THEN RETURN : REM locked door
+3860 END IF
 3870 temp(row,col) = dist;
 3880 IF pos = 0 OR pos >= 20 OR (treasureLeft = 0 AND pos <> 3) THEN
 3890     queueEnd = queueEnd + 1
