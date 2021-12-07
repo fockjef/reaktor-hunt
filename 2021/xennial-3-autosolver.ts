@@ -1,19 +1,8 @@
 type Maze = string[][];
 
-type Target = {
-    id: number;
-    type: string;
-    r: number;
-    c: number;
-    keys: string[];
-    required: boolean;
-    group?: Target[];
-};
+type Target = { id: number; type: string; r: number; c: number; keys: string[]; required: boolean; group?: Target[] };
 
-type Path = {
-    dist: number;
-    path: Target[];
-};
+type Path = { dist: number; path: Target[]; requiredKeys: string[] };
 
 const RDLU = [
     [0, 1], // R = 0
@@ -28,13 +17,12 @@ const RE = {
     target: /^[a-z\$<>]$/,
 };
 
-function loadMaze() : Maze {
-    let mazeText :string;
-    if( typeof window == "undefined" ){
-        mazeText = require("fs").readFileSync("2021-xennial-level3-survive_the_dungeon-maze.txt").toString();
-    }
-    else{
-        mazeText = document.body.innerText;
+function loadMaze(): Maze {
+    let mazeText: string;
+    if (typeof window == "undefined") {
+        mazeText = require("fs").readFileSync("xennial-3-maze.txt").toString();
+    } else {
+        mazeText = document.getElementById("mazedata").innerText;
     }
     return mazeText.split(/\n/).map((row) => row.split(""));
 }
@@ -162,16 +150,11 @@ function groupTargets(targets: Target[], MAX_DIST: number = 10): Target[] {
     return groups;
 }
 
-function findBestPath(
-    start: Target,
-    end: Target,
-    targets: Target[],
-    keys: string[] = [],
-    maxDist: number = Infinity
-): Path {
+function findBestPath(start: Target, end: Target, targets: Target[], keys: string[] = [], maxDist: number = Infinity): Path {
     let bestPath: Path = {
             dist: maxDist,
             path: [],
+            requiredKeys: [],
         },
         k = keys.sort().join("");
 
@@ -189,6 +172,11 @@ function findBestPath(
             if (dist + path.dist < bestPath.dist) {
                 bestPath = path;
                 bestPath.dist += dist;
+                keys.forEach((kk) => {
+                    if (!bestPath.requiredKeys.includes(kk) && distance(start.id, t.id, k.replace(kk, "")) != dist) {
+                        bestPath.requiredKeys.push(kk);
+                    }
+                });
             }
         }
     }
@@ -199,6 +187,7 @@ function findBestPath(
             bestPath = {
                 dist: dist,
                 path: [end],
+                requiredKeys: [],
             };
         }
     }
@@ -227,7 +216,7 @@ function findSteps(keys: string[], start: Target, end: Target): number[] {
     return steps;
 }
 
-let maze: Maze = loadMaze()
+let maze: Maze = loadMaze();
 let targets: Target[] = findTargets();
 let distance = calcDistances(targets);
 let start: Target = targets.splice(
@@ -247,15 +236,13 @@ bestPath.path.forEach((p, i, P) => {
         path.map((t) => t.keys)
     );
     if (p.group && p.group.length > 1) {
-        p.group.forEach((t) => (t.required = true));
+        p.group.forEach((t) => (t.required = t.type == "$" || bestPath.requiredKeys.includes(t.type)));
         let q = findBestPath(path[path.length - 1], P[i + 1], p.group, keys);
         path.push(...q.path.slice(1, -1));
     } else {
         path.push(p);
     }
 });
-console.log(path);
-/*
 maze[goal.r][goal.c] = "#";
 let keys = [],
     steps = [];
@@ -264,5 +251,11 @@ for (let i = 0; i < path.length - 1; i++) {
     keys.push(...path[i].keys);
     steps.push(...findSteps(keys, path[i], path[i + 1]));
 }
-document.body.innerText = steps.map((s, i) => `${3001 + i} POKE 0, ${s} : RETURN`).join("\n");
-*/
+
+let code = "3000 GOTO 3000 + steps\n" + steps.map((s, i) => `${3001 + i} POKE 0, ${s} : RETURN`).join("\n");
+if (typeof window == "undefined") {
+    console.log(code);
+} else {
+    document.getElementById("app").getElementsByTagName("textarea")[0].value = code;
+    [...document.getElementById("app").getElementsByTagName("button")].filter((b) => b.innerText == "RUN")[0].click();
+}
