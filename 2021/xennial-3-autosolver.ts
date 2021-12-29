@@ -227,7 +227,7 @@ let goal: Target = targets.splice(
     targets.findIndex((t) => t.type == "<"),
     1
 )[0];
-let groups: Target[] = groupTargets(targets.filter((t) => !/[defhi]/.test(t.type)));
+let groups: Target[] = groupTargets(targets);
 let path: Target[] = [],
     bestPath = findBestPath(start, goal, groups);
 bestPath.path.forEach((p, i, P) => {
@@ -252,6 +252,9 @@ for (let i = 0; i < path.length - 1; i++) {
     steps.push(...findSteps(keys, path[i], path[i + 1]));
 }
 
+// bypass drawing:
+// 1501 GOTO 1779
+// 1779 LOCATE 1, 1 : PRINT (100 * steps) / 2309; "%"
 let code = "3000 GOTO 3000 + steps\n" + steps.map((s, i) => `${3001 + i} POKE 0, ${s} : RETURN`).join("\n");
 if (typeof window == "undefined") {
     console.log(code);

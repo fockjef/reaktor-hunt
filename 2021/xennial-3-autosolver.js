@@ -179,7 +179,7 @@ let targets = findTargets();
 let distance = calcDistances(targets);
 let start = targets.splice(targets.findIndex((t) => t.type == "<"), 1)[0];
 let goal = targets.splice(targets.findIndex((t) => t.type == "<"), 1)[0];
-let groups = groupTargets(targets.filter((t) => !/[defhi]/.test(t.type)));
+let groups = groupTargets(targets);
 let path = [], bestPath = findBestPath(start, goal, groups);
 bestPath.path.forEach((p, i, P) => {
     let keys = Array.prototype.concat.apply([], path.map((t) => t.keys));
