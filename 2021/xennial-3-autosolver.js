@@ -200,6 +200,9 @@ for (let i = 0; i < path.length - 1; i++) {
     keys.push(...path[i].keys);
     steps.push(...findSteps(keys, path[i], path[i + 1]));
 }
+// bypass drawing:
+// 1501 GOTO 1779
+// 1779 LOCATE 1, 1 : PRINT (100 * steps) / 2309; "%"
 let code = "3000 GOTO 3000 + steps\n" + steps.map((s, i) => `${3001 + i} POKE 0, ${s} : RETURN`).join("\n");
 if (typeof window == "undefined") {
     console.log(code);
