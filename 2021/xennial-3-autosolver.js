@@ -1,213 +1,178 @@
-const RDLU = [
-    [0, 1],
-    [1, 0],
-    [0, -1],
-    [-1, 0], // U = 3
-];
-const RE = {
-    door: /^[A-Z]$/,
-    key: /^[a-z]$/g,
-    target: /^[a-z\$<>]$/,
-};
-function loadMaze() {
-    let mazeText;
-    if (typeof window == "undefined") {
-        mazeText = require("fs").readFileSync("xennial-3-maze.txt").toString();
+const RDLU = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+const reKey = /^[a-z]$/;
+const reDoor = /^[A-Z]$/;
+// read maze and convert to 2d-array
+const maze = require("fs")
+    .readFileSync("xennial-3-maze.txt")
+    .toString()
+    .split(/\n/)
+    .map(row => row.split(""));
+// find start, goal, key and treasure nodes in maze
+const nodes = [];
+maze.forEach((row, r) => row.forEach((type, c) => {
+    if (/[<>a-z$]/.test(type)) {
+        nodes.push({
+            id: nodes.length,
+            r,
+            c,
+            type,
+            keys: reKey.test(type) ? [type] : [],
+            num$: type == "$" ? 1 : 0
+        });
     }
-    else {
-        mazeText = document.getElementById("mazedata").innerText;
+}));
+// all keys in the maze, duh!
+const allKeys = nodes.filter(n => /[a-z]/.test(n.type)).map(n => n.type).sort().join("");
+// calculate distances between nodes for every possible key combination
+const distance = (function () {
+    const dist = {};
+    for (let i = 0; i < Math.pow(2, allKeys.length); i++) {
+        let keys = i.toString(2).split("").reverse().map((digit, i) => digit == "1" ? allKeys[i] : "").join("");
+        dist[keys] = new Array(nodes.length - 1);
+        for (let j = 0; j < nodes.length - 1; j++) {
+            dist[keys][j] = new Array(nodes.length - j - 1);
+            let d = walkMaze(keys, nodes[j]);
+            for (let k = j + 1; k < nodes.length; k++) {
+                dist[keys][j][k - j - 1] = d[nodes[k].r][nodes[k].c];
+            }
+        }
     }
-    return mazeText.split(/\n/).map((row) => row.split(""));
+    return function (node1, node2, keys) {
+        return node1.id < node2.id
+            ? dist[keys][node1.id][node2.id - node1.id - 1]
+            : dist[keys][node2.id][node1.id - node2.id - 1];
+    };
+})();
+// pull out start and goal nodes
+const start = nodes.splice(nodes.findIndex(n => n.type == "<"), 1)[0];
+const goal = nodes.splice(nodes.findIndex(n => n.type == ">"), 1)[0];
+// group nodes by proximity
+const nodeGroups = [];
+nodes.forEach((node, i) => {
+    if (!nodes.slice(i + 1).some(n => distance(node, n, "") <= 10)) {
+        let group = nodes.filter(n => node == n || distance(node, n, "") <= 10);
+        nodeGroups.push({
+            id: group[0].id,
+            r: group[0].r,
+            c: group[0].c,
+            type: group.map(n => n.type).join(""),
+            keys: group.filter(n => reKey.test(n.type)).map(n => n.type),
+            num$: group.filter(n => n.type == "$").length,
+            group
+        });
+    }
+});
+// calculate baseline path by traversing from nearest node to nearest node until all nodes reached
+let basePath = { path: [start], dist: 0 };
+while (basePath.path[0] != goal) {
+    let keys = [].concat(...basePath.path.map(n => n.keys)).sort().join(""), nextNode = nodeGroups
+        .filter(n => !basePath.path.includes(n))
+        .sort((a, b) => distance(basePath.path[0], a, keys) - distance(basePath.path[0], b, keys))[0] || goal;
+    basePath.dist += distance(basePath.path[0], nextNode, keys);
+    basePath.path.unshift(nextNode);
 }
-function findTargets() {
-    let targets = [];
-    maze.forEach((row, r) => {
-        row.forEach((type, c) => {
-            if (RE.target.test(type)) {
-                targets.push({
-                    id: targets.length,
-                    r,
-                    c,
-                    type,
-                    keys: type.match(RE.key) || [],
-                    required: type == "$",
-                });
+// find the best path!
+let bestPath = findBestPath(start, goal, nodeGroups, [], basePath.dist);
+// determine which keys are actually used
+let requiredKeys = new Set();
+bestPath.path.forEach((node, i, path) => {
+    let keys = [].concat(...path.slice(0, i).map(n => n.keys));
+    if (keys.length) {
+        let keyStr = keys.sort().join(""), dist = distance(path[i - 1], node, keyStr);
+        keys.forEach(k => {
+            if (!requiredKeys.has(k)) {
+                let kS = keyStr.replace(k, "");
+                if (distance(path[i - 1], node, kS) != dist) {
+                    requiredKeys.add(k);
+                }
             }
         });
-    });
-    return targets;
+    }
+});
+// find best path through all nodes, not just node groups
+let fullPath = [];
+for (let i = 0, path = bestPath.path; i < path.length; i++) {
+    if (!path[i].group || path[i].group.length == 1) {
+        fullPath.push(path[i]);
+    }
+    else {
+        let group = path[i].group.filter(n => n.type == "$" || requiredKeys.has(n.type));
+        group.forEach(node => node.num$ = 1);
+        fullPath.push(...findBestPath(path[i - 1], path[i + 1], group, [].concat(...path.slice(0, i).map(n => n.keys))).path.slice(1, -1));
+    }
 }
-function walkMaze(keys, start, end) {
-    let distance = maze.map((r) => r.map(() => Infinity)), queue = [start];
-    distance[start.r][start.c] = 0;
+// calculate steps through the maze
+let allSteps = [];
+maze[goal.r][goal.c] = "#"; // block off the exit until final step
+RDLU.splice(0, 0, ...RDLU.splice(2, 2)); // swap R/L & U/D to favor moving right
+for (let i = 0, keys = []; i < fullPath.length - 1; i++) {
+    if (fullPath[i + 1] == goal)
+        maze[goal.r][goal.c] = "."; // unblock the exit
+    keys.push(...fullPath[i].keys);
+    let dist = walkMaze(keys.sort().join(""), fullPath[i], fullPath[i + 1]), { r, c } = fullPath[i + 1], steps = [];
+    while (dist[r][c]) {
+        for (let j = 0; j < RDLU.length; j++) {
+            let [rr, cc] = RDLU[j];
+            rr += r;
+            cc += c;
+            if (dist[rr][cc] < dist[r][c]) {
+                steps.push(j);
+                r = rr;
+                c = cc;
+                j = RDLU.length;
+            }
+        }
+    }
+    allSteps.push(...steps.reverse());
+}
+console.log([
+    "3000 GOTO 3000 + steps",
+    ...allSteps.map((dir, i) => `${3001 + i} POKE 0, ${dir} : RETURN`)
+].join("\n"));
+function walkMaze(keys = "", start, goal) {
+    let dist = maze.map(row => new Array(row.length).fill(Infinity)), queue = [start];
+    dist[start.r][start.c] = 0;
     while (queue.length) {
-        let { r, c } = queue.shift(), d = distance[r][c];
+        let { r, c } = queue.shift(), d = dist[r][c];
         for (let i = 0; i < RDLU.length; i++) {
-            let rr = r + RDLU[i][0], cc = c + RDLU[i][1], pos = maze[rr][cc];
-            // return if tile is: already checked, a wall, or a locked door w/o a key
-            if (distance[rr][cc] > d + 1 && pos != "#" && (!RE.door.test(pos) || keys.includes(pos.toLowerCase()))) {
-                distance[rr][cc] = d + 1;
-                if (end && rr == end.r && cc == end.c) {
-                    return distance;
+            let [rr, cc] = RDLU[i];
+            rr += r;
+            cc += c;
+            let type = maze[rr][cc];
+            if (dist[rr][cc] > d + 1 && type != "#" && (!reDoor.test(type) || keys.includes(type.toLowerCase()))) {
+                dist[rr][cc] = d + 1;
+                if (goal && rr == goal.r && cc == goal.c) {
+                    return dist;
                 }
                 queue.push({ r: rr, c: cc });
             }
         }
     }
-    return distance;
+    return dist;
 }
-function calcDistances(targets) {
-    let distance = {}, allKeys = Array.prototype.concat
-        .apply([], targets.map((t) => t.keys))
-        .sort()
-        .join("");
-    for (let i = 0; i < Math.pow(2, allKeys.length); i++) {
-        let keys = [];
-        // convert number into keys, if bit is set add corresponding key
-        // bit 1 -> a, bit 2 -> b, etc...
-        // ex: 75 = 1001011 -> ["a","b","d","g"]
-        i.toString(2)
-            .split("")
-            .reverse()
-            .forEach((x, j) => {
-            if (x == "1") {
-                keys.push(allKeys.charAt(j));
-            }
-        });
-        let temp = (distance[keys.join("")] = new Array(targets.length - 1));
-        for (let j = 0; j < targets.length - 1; j++) {
-            temp[j] = new Array(targets.length - 1 - j);
-            let dist = walkMaze(keys, targets[j]);
-            for (let k = j + 1; k < targets.length; k++) {
-                temp[j][k - j - 1] = dist[targets[k].r][targets[k].c];
-            }
-        }
-    }
-    return function (t1, t2, keys) {
-        if (t2 < t1) {
-            let temp = t1;
-            t1 = t2;
-            t2 = temp;
-        }
-        return distance[keys][t1][t2 - t1 - 1];
-    };
-}
-function groupTargets(targets, MAX_DIST = 10) {
-    let groups = [];
-    targets = targets.slice();
-    while (targets.length) {
-        let t = targets.shift();
-        if (t.type == "<" || t.type == ">") {
-            t.group = [];
-            groups.push(t);
-        }
-        else {
-            let g = [t, ...targets.filter((tt) => distance(t.id, tt.id, "") <= MAX_DIST)], avgR = g.map((t) => t.r).reduce((X, x) => X + x) / g.length, avgC = g.map((t) => t.c).reduce((X, x) => X + x) / g.length, centroid = g
-                .map((t) => ({
-                t,
-                dist: Math.abs(t.r - avgR) + Math.abs(t.c - avgC),
-            }))
-                .sort((a, b) => a.dist - b.dist || a.t.id - b.t.id)[0].t;
-            groups.push({
-                id: centroid.id,
-                type: g
-                    .map((t) => t.type)
-                    .sort()
-                    .join(""),
-                r: centroid.r,
-                c: centroid.c,
-                keys: Array.prototype.concat.apply([], g.map((t) => t.keys)),
-                required: g.some((t) => t.required),
-                group: g,
-            });
-            targets = targets.filter((t) => !g.includes(t));
-        }
-    }
-    return groups;
-}
-function findBestPath(start, end, targets, keys = [], maxDist = Infinity) {
+function findBestPath(start, goal, nodes, keys = [], MAX_DISTANCE = Infinity) {
     let bestPath = {
-        dist: maxDist,
         path: [],
-        requiredKeys: [],
-    }, k = keys.sort().join("");
-    for (let i = 0; i < targets.length; i++) {
-        let t = targets[i], dist = distance(start.id, t.id, k);
-        if (dist < bestPath.dist) {
-            let path = findBestPath(t, end, targets.filter((tt) => tt != t), keys.concat(t.keys), bestPath.dist - dist);
-            if (dist + path.dist < bestPath.dist) {
+        dist: Infinity
+    }, keyStr = keys.sort().join("");
+    if (nodes.every(n => n.num$ == 0) && distance(start, goal, keyStr) < MAX_DISTANCE) {
+        bestPath = {
+            path: [goal],
+            dist: distance(start, goal, keyStr)
+        };
+        MAX_DISTANCE = bestPath.dist;
+    }
+    for (let i = 0; i < nodes.length; i++) {
+        let dist = distance(start, nodes[i], keyStr);
+        if (dist + distance(nodes[i], goal, allKeys) < MAX_DISTANCE) {
+            let path = findBestPath(nodes[i], goal, nodes.filter((n, j) => i != j), keys.concat(nodes[i].keys), MAX_DISTANCE - dist);
+            if (path.dist < MAX_DISTANCE) {
                 bestPath = path;
                 bestPath.dist += dist;
-                keys.forEach((kk) => {
-                    if (!bestPath.requiredKeys.includes(kk) && distance(start.id, t.id, k.replace(kk, "")) != dist) {
-                        bestPath.requiredKeys.push(kk);
-                    }
-                });
+                MAX_DISTANCE = bestPath.dist;
             }
-        }
-    }
-    if (!targets.some((t) => t.required)) {
-        let dist = distance(start.id, end.id, k);
-        if (dist < bestPath.dist) {
-            bestPath = {
-                dist: dist,
-                path: [end],
-                requiredKeys: [],
-            };
         }
     }
     bestPath.path.unshift(start);
     return bestPath;
-}
-function findSteps(keys, start, end) {
-    let dist = walkMaze(keys, start, end), { r, c } = end, numSteps = dist[r][c], steps = new Array(numSteps);
-    for (let i = numSteps - 1; i >= 0; i--) {
-        for (let j = 0; j < RDLU.length; j++) {
-            let rr = r - RDLU[j][0], cc = c - RDLU[j][1];
-            if (dist[rr][cc] == i) {
-                r = rr;
-                c = cc;
-                steps[i] = j;
-                j = RDLU.length;
-            }
-        }
-    }
-    return steps;
-}
-let maze = loadMaze();
-let targets = findTargets();
-let distance = calcDistances(targets);
-let start = targets.splice(targets.findIndex((t) => t.type == "<"), 1)[0];
-let goal = targets.splice(targets.findIndex((t) => t.type == "<"), 1)[0];
-let groups = groupTargets(targets);
-let path = [], bestPath = findBestPath(start, goal, groups);
-bestPath.path.forEach((p, i, P) => {
-    let keys = Array.prototype.concat.apply([], path.map((t) => t.keys));
-    if (p.group && p.group.length > 1) {
-        p.group.forEach((t) => (t.required = t.type == "$" || bestPath.requiredKeys.includes(t.type)));
-        let q = findBestPath(path[path.length - 1], P[i + 1], p.group, keys);
-        path.push(...q.path.slice(1, -1));
-    }
-    else {
-        path.push(p);
-    }
-});
-maze[goal.r][goal.c] = "#";
-let keys = [], steps = [];
-for (let i = 0; i < path.length - 1; i++) {
-    if (path[i + 1] == goal)
-        maze[goal.r][goal.c] = " ";
-    keys.push(...path[i].keys);
-    steps.push(...findSteps(keys, path[i], path[i + 1]));
-}
-// bypass drawing:
-// 1501 GOTO 1779
-// 1779 LOCATE 1, 1 : PRINT (100 * steps) / 2309; "%"
-let code = "3000 GOTO 3000 + steps\n" + steps.map((s, i) => `${3001 + i} POKE 0, ${s} : RETURN`).join("\n");
-if (typeof window == "undefined") {
-    console.log(code);
-}
-else {
-    document.getElementById("app").getElementsByTagName("textarea")[0].value = code;
-    [...document.getElementById("app").getElementsByTagName("button")].filter((b) => b.innerText == "RUN")[0].click();
 }
