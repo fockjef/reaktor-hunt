@@ -30,9 +30,11 @@ maze.forEach( (row, r) =>
     })
 );
 
+// all keys in the maze, duh!
+const allKeys : string = nodes.filter( n => /[a-z]/.test(n.type)).map( n => n.type).sort().join("");
+
 // calculate distances between nodes for every possible key combination
 const distance = (function(){
-    const allKeys : string[] = nodes.filter( n => /[a-z]/.test(n.type)).map( n => n.type).sort();
     const dist = {};
     for( let i = 0; i < 2 ** allKeys.length; i++ ){
         let keys = i.toString(2).split("").reverse().map( ( digit, i) => digit == "1" ? allKeys[i] : "").join("");
@@ -73,22 +75,85 @@ nodes.forEach( ( node, i) => {
     }
 });
 
-// calculate baseline path by simply traversing from nearest node to nearest node until all nodes reached
-let greedyPath : Path = { path: [start], dist: 0 };
-while( greedyPath.path[0] != goal ){
-    let keys = [].concat(...greedyPath.path.map( n => n.keys)).sort().join(""),
+// calculate baseline path by traversing from nearest node to nearest node until all nodes reached
+let basePath : Path = { path: [start], dist: 0 };
+while( basePath.path[0] != goal ){
+    let keys = [].concat(...basePath.path.map( n => n.keys)).sort().join(""),
         nextNode = nodeGroups
-            .filter( n => !greedyPath.path.includes(n))
-            .sort( ( a, b) => distance( greedyPath.path[0], a, keys) - distance( greedyPath.path[0], b, keys))[0] || goal;
-    greedyPath.dist += distance( greedyPath.path[0], nextNode, keys);
-    greedyPath.path.unshift(nextNode);
+            .filter( n => !basePath.path.includes(n))
+            .sort( ( a, b) => distance( basePath.path[0], a, keys) - distance( basePath.path[0], b, keys))[0] || goal;
+    basePath.dist += distance( basePath.path[0], nextNode, keys);
+    basePath.path.unshift(nextNode);
 }
 
-let bestPath = findBestPath( start, goal, nodeGroups, [], greedyPath.dist);
+// find the best path!
+let bestPath = findBestPath( start, goal, nodeGroups, [], basePath.dist);
 
-// dirty hack to boost score
-// 1081 GOTO 1120 : REM +312 points
-// 1501 GOTO 1780 : REM +numSteps * ??? points
+// determine which keys are actually used
+let requiredKeys = new Set();
+bestPath.path.forEach( ( node, i, path) => {
+    let keys = [].concat(...path.slice( 0, i).map( n => n.keys));
+    if( keys.length ){
+        let keyStr = keys.sort().join(""),
+            dist = distance( path[i-1], node, keyStr);
+        keys.forEach( k => {
+            if( !requiredKeys.has(k) ){
+                let kS = keyStr.replace( k, "");
+                if( distance( path[i-1], node, kS) != dist ){
+                    requiredKeys.add(k);
+                }
+            }
+        });
+    }
+});
+
+// find best path through all nodes, not just node groups
+let fullPath : MazeNode[] = [];
+for( let i = 0, path = bestPath.path; i < path.length; i++ ){
+    if( !path[i].group || path[i].group.length == 1 ){
+        fullPath.push(path[i].group[0]);
+    }
+    else{
+        let group = path[i].group.filter( n => n.type == "$" || requiredKeys.has(n.type));
+        group.forEach( node => node.num$ = 1);
+        fullPath.push(
+            ...findBestPath(
+                path[i-1],
+                path[i+1],
+                group,
+                [].concat(...path.slice( 0, i).map( n => n.keys))
+            ).path.slice( 1, -1)
+        );
+    }
+}
+
+// calculate steps through the maze
+let allSteps : number[] = [];
+for( let i = 0, keys : string[] = []; i < fullPath.length - 1; i++ ){
+    keys.push(...fullPath[i].keys);
+    let dist = walkMaze( keys.sort().join(""), fullPath[i], fullPath[i+1]),
+        [ r, c ] = fullPath[i+1],
+        steps : number[] = [];
+    while( dist[r][c] ){
+        for( let j = 0; j < RDLU.length; j++ ){
+            let { rr, cc } = RDLU[j];
+            rr += r;
+            cc += c;
+            if( dist[rr][cc] < dist[r][c] ){
+                steps.push((j + 2) % 4);
+                r = rr;
+                c = cc;
+                j = RDLU.length;
+            }
+        }
+    }
+    allSteps.push(...steps.reverse());
+}
+
+console.log(
+    "3000 GOTO 3000 + steps\n",
+    allSteps.map( ( dir, i) => `${3001 + i} POKE 0, ${dir} : RETURN`).join("\n")
+);
 
 function walkMaze( keys : string = "", start : MazeNode, goal? : MazeNode ) : number[][] {
     let dist : number[][] = maze.map( row => new Array(row.length).fill(Infinity)),
@@ -129,7 +194,7 @@ function findBestPath( start : MazeNode, goal : MazeNode, nodes : MazeNode[], ke
     }
     for( let i = 0; i < nodes.length; i++ ){
         let dist = distance( start, nodes[i], keyStr);
-        if( dist < MAX_DISTANCE ){
+        if( dist + distance( nodes[i], goal, allKeys) < MAX_DISTANCE ){
             let path = findBestPath(
                 nodes[i],
                 goal,
